@@ -8,6 +8,7 @@ from PIL import Image
 import numpy as np
 from datetime import datetime
 from pathlib import Path
+import gc  # 메모리 관리
 
 
 class WebPToMP4Converter:
@@ -256,37 +257,62 @@ class WebPToMP4Converter:
             self.log(f"변환 시작 | 파일 수: {len(webp_files)} | FPS: {fps} | 반복: {repeat_count}x")
             self.log("━" * 50)
             
-            # 첫 번째 패스: 모든 파일의 해상도를 확인하고 기준 해상도 결정
-            all_frames = []
+            # 첫 번째 패스: 기준 해상도 결정 (메모리 효율적 방식)
             target_width = None
             target_height = None
+            file_info = []  # 파일 정보만 저장 (프레임은 보관 안 함)
             
             for idx, webp_file in enumerate(webp_files):
                 try:
-                    progress = (idx / len(webp_files)) * 50  # 0-50%
+                    progress = (idx / len(webp_files)) * 30  # 0-30%
                     self.progress_var.set(progress)
-                    self.progress_label.config(text=f"진행률: {progress:.1f}% ({idx + 1}/{len(webp_files)}) - 프레임 추출 중")
+                    self.progress_label.config(text=f"진행률: {progress:.1f}% ({idx + 1}/{len(webp_files)}) - 정보 수집 중")
                     
                     filename = os.path.basename(webp_file)
-                    self.log(f"처리 중... [{idx + 1}/{len(webp_files)}] {filename}")
+                    self.log(f"정보 수집... [{idx + 1}/{len(webp_files)}] {filename}")
                     
-                    # WebP의 모든 프레임 추출
-                    webp_frames, width, height = self.extract_all_frames_from_webp(webp_file)
+                    # 🔑 프레임을 추출하지 말고 해상도 정보만 가져오기
+                    img = Image.open(webp_file)
+                    width = img.width
+                    height = img.height
+                    
+                    # 프레임 개수 세기 (프레임 데이터는 로드하지 않음)
+                    frame_count = 0
+                    frame_index = 0
+                    while True:
+                        try:
+                            img.seek(frame_index)
+                            frame_count += 1
+                            frame_index += 1
+                        except EOFError:
+                            break
+                    
+                    if frame_count == 0:
+                        frame_count = 1
+                    
+                    img.close()  # 즉시 닫기
                     
                     # 첫 파일의 해상도를 기준으로 설정
                     if target_width is None:
                         target_width = width
                         target_height = height
                     
-                    all_frames.append((webp_frames, width, height, filename))
-                    self.log(f"✓ {filename} - {width}x{height} ({len(webp_frames)}개 프레임)")
+                    file_info.append({
+                        'path': webp_file,
+                        'filename': filename,
+                        'width': width,
+                        'height': height,
+                        'frame_count': frame_count
+                    })
+                    
+                    self.log(f"✓ {filename} - {width}x{height} ({frame_count}개 프레임)")
                     
                 except Exception as e:
                     self.failed_files.append((os.path.basename(webp_file), str(e)))
                     self.log(f"✗ 실패: {os.path.basename(webp_file)} - {str(e)}")
                     continue
             
-            if not all_frames:
+            if not file_info:
                 messagebox.showerror("오류", "변환할 수 있는 이미지가 없습니다")
                 self.log("✗ 오류: 변환할 수 있는 이미지가 없습니다")
                 return
@@ -301,28 +327,41 @@ class WebPToMP4Converter:
             if not out.isOpened():
                 raise Exception("VideoWriter를 열 수 없습니다")
             
-            total_frames = sum(len(frames) * repeat_count for frames, _, _, _ in all_frames)
+            # 총 프레임 개수 계산
+            total_frames = sum(info['frame_count'] * repeat_count for info in file_info)
             written_frames = 0
             
-            # 두 번째 패스: 모든 프레임을 쓰기
-            for frames, width, height, filename in all_frames:
-                for frame in frames:
-                    # 종횡비를 유지하면서 리사이징 (패딩 추가)
-                    if width != target_width or height != target_height:
-                        frame = self.resize_frame_with_aspect_ratio(frame, target_width, target_height)
+            # 🔑 두 번째 패스: 파일별로 프레임을 실시간으로 처리
+            for file_idx, info in enumerate(file_info):
+                try:
+                    # 프레임 추출 (이번에만 로드)
+                    webp_frames, width, height, filename = self.extract_all_frames_from_webp(info['path']), info['width'], info['height'], info['filename']
                     
-                    # 반복 횟수만큼 쓰기
-                    for _ in range(repeat_count):
-                        success = out.write(frame)
-                        if success:
-                            written_frames += 1
+                    for frame in webp_frames:
+                        # 종횡비를 유지하면서 리사이징 (패딩 추가)
+                        if width != target_width or height != target_height:
+                            frame = self.resize_frame_with_aspect_ratio(frame, target_width, target_height)
                         
-                        # 진행률 업데이트 (50-100%)
-                        progress = 50 + (written_frames / total_frames) * 50
-                        self.progress_var.set(min(progress, 100))
-                        self.progress_label.config(text=f"진행률: {progress:.1f}% ({written_frames}/{total_frames})")
-                        self.log_text.see(tk.END)
-                        self.root.update()
+                        # 반복 횟수만큼 쓰기
+                        for _ in range(repeat_count):
+                            success = out.write(frame)
+                            if success:
+                                written_frames += 1
+                            
+                            # 진행률 업데이트 (30-100%)
+                            progress = 30 + (written_frames / total_frames) * 70
+                            self.progress_var.set(min(progress, 100))
+                            self.progress_label.config(text=f"진행률: {progress:.1f}% ({written_frames}/{total_frames})")
+                            self.log_text.see(tk.END)
+                            self.root.update()
+                    
+                    # 프레임 메모리 해제
+                    webp_frames = None
+                    gc.collect()  # 가비지 컬렉션 강제 실행
+                    
+                except Exception as e:
+                    self.log(f"✗ 프레임 처리 실패: {info['filename']} - {str(e)}")
+                    continue
             
             out.release()
             
@@ -354,6 +393,7 @@ class WebPToMP4Converter:
         finally:
             self.is_converting = False
             self.convert_btn.config(state=tk.NORMAL)
+            gc.collect()  # 마지막 메모리 정리
     
     def save_failed_files(self, output_path):
         if not self.failed_files:
