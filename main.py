@@ -169,12 +169,18 @@ class WebPToMP4Converter:
     def extract_all_frames_from_webp(self, webp_file):
         """WebP 파일의 모든 프레임 추출 (Animated WebP 지원)"""
         frames = []
+        img = None
         try:
             img = Image.open(webp_file)
+            img.seek(0)  # 첫 프레임으로 이동
+            
+            width = img.width
+            height = img.height
+            frame_index = 0
             
             # Animated WebP인 경우 모든 프레임 추출
-            try:
-                while True:
+            while True:
+                try:
                     # 현재 프레임을 RGB로 변환
                     frame = img.convert('RGB')
                     frame_np = np.array(frame)
@@ -182,10 +188,11 @@ class WebPToMP4Converter:
                     frames.append(frame_bgr)
                     
                     # 다음 프레임으로 이동
-                    img.seek(img.tell() + 1)
-            except EOFError:
-                # 모든 프레임을 다 읽었을 때 발생
-                pass
+                    frame_index += 1
+                    img.seek(frame_index)
+                except EOFError:
+                    # 모든 프레임을 다 읽었을 때 발생
+                    break
             
             # 프레임이 없으면 정적 이미지로 처리
             if not frames:
@@ -195,10 +202,14 @@ class WebPToMP4Converter:
                 frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
                 frames.append(frame_bgr)
             
-            return frames, img.width, img.height
+            return frames, width, height
         
         except Exception as e:
             raise Exception(f"프레임 추출 실패: {str(e)}")
+        finally:
+            # 파일 닫기 (중요!)
+            if img is not None:
+                img.close()
     
     def convert_webp_to_mp4(self, webp_files, output_path, fps, repeat_count):
         try:
@@ -251,7 +262,7 @@ class WebPToMP4Converter:
                 out.write(frame)
                 if (i + 1) % max(1, len(frames) // 10) == 0:
                     progress = ((i + 1) / len(frames)) * 100
-                    self.progress_var.set(100)
+                    self.progress_var.set(progress)
             
             out.release()
             
