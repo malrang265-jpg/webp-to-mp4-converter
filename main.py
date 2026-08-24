@@ -166,6 +166,40 @@ class WebPToMP4Converter:
         thread.daemon = True
         thread.start()
     
+    def extract_all_frames_from_webp(self, webp_file):
+        """WebP 파일의 모든 프레임 추출 (Animated WebP 지원)"""
+        frames = []
+        try:
+            img = Image.open(webp_file)
+            
+            # Animated WebP인 경우 모든 프레임 추출
+            try:
+                while True:
+                    # 현재 프레임을 RGB로 변환
+                    frame = img.convert('RGB')
+                    frame_np = np.array(frame)
+                    frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
+                    frames.append(frame_bgr)
+                    
+                    # 다음 프레임으로 이동
+                    img.seek(img.tell() + 1)
+            except EOFError:
+                # 모든 프레임을 다 읽었을 때 발생
+                pass
+            
+            # 프레임이 없으면 정적 이미지로 처리
+            if not frames:
+                img.seek(0)
+                frame = img.convert('RGB')
+                frame_np = np.array(frame)
+                frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
+                frames.append(frame_bgr)
+            
+            return frames, img.width, img.height
+        
+        except Exception as e:
+            raise Exception(f"프레임 추출 실패: {str(e)}")
+    
     def convert_webp_to_mp4(self, webp_files, output_path, fps, repeat_count):
         try:
             self.log("━" * 50)
@@ -184,25 +218,16 @@ class WebPToMP4Converter:
                     filename = os.path.basename(webp_file)
                     self.log(f"처리 중... [{idx + 1}/{len(webp_files)}] {filename}")
                     
-                    # WebP 이미지 로드
-                    img = Image.open(webp_file)
+                    # WebP의 모든 프레임 추출
+                    webp_frames, width, height = self.extract_all_frames_from_webp(webp_file)
                     
-                    # RGB로 변환 (필요시)
-                    if img.mode != 'RGB':
-                        img = img.convert('RGB')
+                    # 각 WebP 파일의 모든 프레임을 반복 횟수만큼 추가
+                    for frame in webp_frames:
+                        for _ in range(repeat_count):
+                            frames.append(frame)
+                            frame_count += 1
                     
-                    # 원본 해상도 유지
-                    img_np = np.array(img)
-                    
-                    # OpenCV는 BGR 형식이므로 변환
-                    img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-                    
-                    # 반복 횟수만큼 프레임 추가
-                    for _ in range(repeat_count):
-                        frames.append(img_bgr)
-                        frame_count += 1
-                    
-                    self.log(f"✓ {filename} - {img.width}x{img.height}")
+                    self.log(f"✓ {filename} - {width}x{height} ({len(webp_frames)}개 프레임)")
                     
                 except Exception as e:
                     self.failed_files.append((os.path.basename(webp_file), str(e)))
