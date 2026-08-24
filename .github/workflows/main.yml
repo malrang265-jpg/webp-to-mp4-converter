@@ -63,7 +63,7 @@ jobs:
         pyinstaller --onefile --windowed --name=WebP-to-MP4-Converter main.py
     
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: WebP-to-MP4-Converter-Windows
         path: dist/WebP-to-MP4-Converter.exe
