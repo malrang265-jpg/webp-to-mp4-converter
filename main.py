@@ -334,8 +334,11 @@ class WebPToMP4Converter:
             # 🔑 두 번째 패스: 파일별로 프레임을 실시간으로 처리
             for file_idx, info in enumerate(file_info):
                 try:
-                    # 프레임 추출 (이번에만 로드)
-                    webp_frames, width, height, filename = self.extract_all_frames_from_webp(info['path']), info['width'], info['height'], info['filename']
+                    # 프레임 추출 (이번에만 로드) - 올바른 언팩
+                    webp_frames, width, height = self.extract_all_frames_from_webp(info['path'])
+                    filename = info['filename']
+                    
+                    self.log(f"변환 중... [{file_idx + 1}/{len(file_info)}] {filename}")
                     
                     for frame in webp_frames:
                         # 종횡비를 유지하면서 리사이징 (패딩 추가)
@@ -355,12 +358,15 @@ class WebPToMP4Converter:
                             self.log_text.see(tk.END)
                             self.root.update()
                     
+                    self.log(f"✓ {filename} 변환 완료")
+                    
                     # 프레임 메모리 해제
                     webp_frames = None
                     gc.collect()  # 가비지 컬렉션 강제 실행
                     
                 except Exception as e:
                     self.log(f"✗ 프레임 처리 실패: {info['filename']} - {str(e)}")
+                    self.failed_files.append((info['filename'], str(e)))
                     continue
             
             out.release()
