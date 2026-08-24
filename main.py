@@ -211,6 +211,45 @@ class WebPToMP4Converter:
             if img is not None:
                 img.close()
     
+    def resize_frame_with_aspect_ratio(self, frame, target_width, target_height):
+        """종횡비를 유지하면서 프레임 리사이징 (패딩 추가)"""
+        current_height, current_width = frame.shape[:2]
+        
+        # 이미 목표 해상도와 같으면 그대로 반환
+        if current_width == target_width and current_height == target_height:
+            return frame
+        
+        # 종횡비 계산
+        aspect_ratio = current_width / current_height
+        target_aspect = target_width / target_height
+        
+        if aspect_ratio > target_aspect:
+            # 원본이 더 넓은 경우 (가로가 더 길다)
+            new_width = target_width
+            new_height = int(target_width / aspect_ratio)
+        else:
+            # 원본이 더 좁은 경우 (세로가 더 길다)
+            new_height = target_height
+            new_width = int(target_height * aspect_ratio)
+        
+        # 리사이징
+        resized = cv2.resize(frame, (new_width, new_height))
+        
+        # 패딩 추가 (검정색)
+        pad_top = (target_height - new_height) // 2
+        pad_bottom = target_height - new_height - pad_top
+        pad_left = (target_width - new_width) // 2
+        pad_right = target_width - new_width - pad_left
+        
+        padded = cv2.copyMakeBorder(
+            resized,
+            pad_top, pad_bottom, pad_left, pad_right,
+            cv2.BORDER_CONSTANT,
+            value=(0, 0, 0)  # 검정색 패딩
+        )
+        
+        return padded
+    
     def convert_webp_to_mp4(self, webp_files, output_path, fps, repeat_count):
         try:
             self.log("━" * 50)
@@ -254,7 +293,7 @@ class WebPToMP4Converter:
             
             # MP4 저장
             self.log("━" * 50)
-            self.log(f"MP4 저장 중... (모든 프레임을 {target_width}x{target_height}로 변환)")
+            self.log(f"MP4 저장 중... (모든 프레임을 {target_width}x{target_height}로 변환, 종횡비 유지)")
             
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             out = cv2.VideoWriter(output_path, fourcc, fps, (target_width, target_height))
@@ -268,9 +307,9 @@ class WebPToMP4Converter:
             # 두 번째 패스: 모든 프레임을 쓰기
             for frames, width, height, filename in all_frames:
                 for frame in frames:
-                    # 해상도가 다르면 리사이징
+                    # 종횡비를 유지하면서 리사이징 (패딩 추가)
                     if width != target_width or height != target_height:
-                        frame = cv2.resize(frame, (target_width, target_height))
+                        frame = self.resize_frame_with_aspect_ratio(frame, target_width, target_height)
                     
                     # 반복 횟수만큼 쓰기
                     for _ in range(repeat_count):
