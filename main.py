@@ -217,14 +217,16 @@ class WebPToMP4Converter:
             self.log(f"변환 시작 | 파일 수: {len(webp_files)} | FPS: {fps} | 반복: {repeat_count}x")
             self.log("━" * 50)
             
-            frames = []
-            frame_count = 0
+            # 첫 번째 패스: 모든 파일의 해상도를 확인하고 기준 해상도 결정
+            all_frames = []
+            target_width = None
+            target_height = None
             
             for idx, webp_file in enumerate(webp_files):
                 try:
-                    progress = (idx / len(webp_files)) * 100
+                    progress = (idx / len(webp_files)) * 50  # 0-50%
                     self.progress_var.set(progress)
-                    self.progress_label.config(text=f"진행률: {progress:.1f}% ({idx + 1}/{len(webp_files)})")
+                    self.progress_label.config(text=f"진행률: {progress:.1f}% ({idx + 1}/{len(webp_files)}) - 프레임 추출 중")
                     
                     filename = os.path.basename(webp_file)
                     self.log(f"처리 중... [{idx + 1}/{len(webp_files)}] {filename}")
@@ -232,12 +234,12 @@ class WebPToMP4Converter:
                     # WebP의 모든 프레임 추출
                     webp_frames, width, height = self.extract_all_frames_from_webp(webp_file)
                     
-                    # 각 WebP 파일의 모든 프레임을 반복 횟수만큼 추가
-                    for frame in webp_frames:
-                        for _ in range(repeat_count):
-                            frames.append(frame)
-                            frame_count += 1
+                    # 첫 파일의 해상도를 기준으로 설정
+                    if target_width is None:
+                        target_width = width
+                        target_height = height
                     
+                    all_frames.append((webp_frames, width, height, filename))
                     self.log(f"✓ {filename} - {width}x{height} ({len(webp_frames)}개 프레임)")
                     
                 except Exception as e:
@@ -245,24 +247,43 @@ class WebPToMP4Converter:
                     self.log(f"✗ 실패: {os.path.basename(webp_file)} - {str(e)}")
                     continue
             
-            if not frames:
+            if not all_frames:
                 messagebox.showerror("오류", "변환할 수 있는 이미지가 없습니다")
                 self.log("✗ 오류: 변환할 수 있는 이미지가 없습니다")
                 return
             
             # MP4 저장
             self.log("━" * 50)
-            self.log(f"MP4 저장 중... ({frame_count} 프레임)")
+            self.log(f"MP4 저장 중... (모든 프레임을 {target_width}x{target_height}로 변환)")
             
-            height, width = frames[0].shape[:2]
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            out = cv2.VideoWriter(output_path, fourcc, fps, (target_width, target_height))
             
-            for i, frame in enumerate(frames):
-                out.write(frame)
-                if (i + 1) % max(1, len(frames) // 10) == 0:
-                    progress = ((i + 1) / len(frames)) * 100
-                    self.progress_var.set(progress)
+            if not out.isOpened():
+                raise Exception("VideoWriter를 열 수 없습니다")
+            
+            total_frames = sum(len(frames) * repeat_count for frames, _, _, _ in all_frames)
+            written_frames = 0
+            
+            # 두 번째 패스: 모든 프레임을 쓰기
+            for frames, width, height, filename in all_frames:
+                for frame in frames:
+                    # 해상도가 다르면 리사이징
+                    if width != target_width or height != target_height:
+                        frame = cv2.resize(frame, (target_width, target_height))
+                    
+                    # 반복 횟수만큼 쓰기
+                    for _ in range(repeat_count):
+                        success = out.write(frame)
+                        if success:
+                            written_frames += 1
+                        
+                        # 진행률 업데이트 (50-100%)
+                        progress = 50 + (written_frames / total_frames) * 50
+                        self.progress_var.set(min(progress, 100))
+                        self.progress_label.config(text=f"진행률: {progress:.1f}% ({written_frames}/{total_frames})")
+                        self.log_text.see(tk.END)
+                        self.root.update()
             
             out.release()
             
@@ -272,10 +293,10 @@ class WebPToMP4Converter:
             self.log("━" * 50)
             self.log(f"✓ 변환 완료!")
             self.log(f"📹 출력 파일: {output_path}")
-            self.log(f"📊 총 프레임: {frame_count}")
-            self.log(f"⏱️ 동영상 길이: {frame_count / fps:.2f}초")
-            self.log(f"📐 해상도: {width}x{height} (원본)")
-            self.log(f"⚡ FPS: {fps} (원본)")
+            self.log(f"📊 총 프레임: {written_frames}")
+            self.log(f"⏱️ 동영상 길이: {written_frames / fps:.2f}초")
+            self.log(f"📐 해상도: {target_width}x{target_height}")
+            self.log(f"⚡ FPS: {fps}")
             
             # 실패 파일 저장
             if self.failed_files:
